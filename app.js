@@ -324,13 +324,18 @@ function classify(feature) {
     score: dot(feature, sample.feature),
   }));
   scored.sort((a, b) => b.score - a.score);
+  
+  // 优化：增强权重，压制噪声
   const votes = new Map();
-  scored.slice(0, 17).forEach((item, i) => {
-    votes.set(item.key, (votes.get(item.key) || 0) + item.score * (1.35 - i * 0.035));
+  scored.slice(0, 10).forEach((item, i) => {
+    const weight = (1.5 - i * 0.1);
+    votes.set(item.key, (votes.get(item.key) || 0) + item.score * weight);
   });
+  
   for (const [key, proto] of Object.entries(model.prototypes)) {
-    votes.set(key, (votes.get(key) || 0) + dot(feature, proto) * 1.2);
+    votes.set(key, (votes.get(key) || 0) + dot(feature, proto) * 1.5);
   }
+  
   const ranked = [...votes.entries()].sort((a, b) => b[1] - a[1]);
   const best = ranked[0];
   const second = ranked[1] || [best[0], best[1] * 0.7];
@@ -360,6 +365,14 @@ function findRegions() {
   }
   pts.sort((a, b) => b.mag - a.mag);
   const top = pts.slice(0, Math.max(80, Math.floor(pts.length * 0.18)));
+  
+  // 优化：基于空间聚类中心
+  const cluster = top.slice(0, 20);
+  let sumX = 0, sumY = 0;
+  cluster.forEach(p => { sumX += p.x; sumY += p.y; });
+  const centerX = sumX / (cluster.length || 1);
+  const centerY = sumY / (cluster.length || 1);
+  
   if (!top.length) {
     return {
       scan: { x: 0.18, y: 0.16, w: 0.64, h: 0.68 },
@@ -367,6 +380,7 @@ function findRegions() {
       circle: true,
     };
   }
+  
   let minX = w, minY = h, maxX = 0, maxY = 0;
   top.forEach((p) => {
     minX = Math.min(minX, p.x);
@@ -374,6 +388,7 @@ function findRegions() {
     maxX = Math.max(maxX, p.x);
     maxY = Math.max(maxY, p.y);
   });
+  
   const padX = w * 0.06;
   const padY = h * 0.06;
   const scan = {
@@ -382,22 +397,15 @@ function findRegions() {
     w: Math.min(0.94, (maxX - minX + padX * 2) / w),
     h: Math.min(0.94, (maxY - minY + padY * 2) / h),
   };
-  const focus = top.slice(0, 34);
-  let fx = 0, fy = 0, fm = 0;
-  focus.forEach((p) => {
-    fx += p.x * p.mag;
-    fy += p.y * p.mag;
-    fm += p.mag;
-  });
-  fx /= fm;
-  fy /= fm;
-  const lesionW = Math.max(0.16, Math.min(0.34, scan.w * 0.42));
-  const lesionH = Math.max(0.14, Math.min(0.3, scan.h * 0.38));
+  
+  const lesionW = Math.max(0.18, Math.min(0.30, scan.w * 0.35));
+  const lesionH = Math.max(0.16, Math.min(0.28, scan.h * 0.35));
+  
   return {
     scan,
     lesion: {
-      x: Math.max(0.02, fx / w - lesionW / 2),
-      y: Math.max(0.02, fy / h - lesionH / 2),
+      x: Math.max(0.02, (centerX / w) - lesionW / 2),
+      y: Math.max(0.02, (centerY / h) - lesionH / 2),
       w: lesionW,
       h: lesionH,
     },
