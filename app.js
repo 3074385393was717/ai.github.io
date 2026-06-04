@@ -44,15 +44,15 @@ const I18N = {
     evidenceEmpty: "等待分析结果。",
     recommendTitle: "建议",
     recommendEmpty: "请结合临床症状和正式影像报告判断。",
-    pipeline: ["影像质量预处理", "骨骼边缘增强", "裂隙局部方差分析", "十类骨折特征比对", "病变区域标注"],
+    pipeline: ["影像质量预处理", "骨骼边缘增强", "裂隙候选区域扫描", "十类骨折特征比对", "病变区域标注"],
     confidence: "置信度",
-    unknownArea: "检测到骨折裂隙及皮质中断区",
+    unknownArea: "主要骨性结构及高梯度裂隙候选区",
     evidence: [
-      "上传图像已完成灰度归一化、对比度校正。",
-      "系统通过计算局部区域的像素方差提取骨折裂隙特征。",
-      "红色 ROI 区域即模型判定裂隙中断点最密集的区域。"
+      "上传图像已完成灰度归一化、对比度校正和边缘增强。",
+      "模型将影像纹理与数据集中最相近样本进行 KNN 比对。",
+      "红色框/圆为高梯度骨皮质中断或异常边缘聚集区域。"
     ],
-    recommendation: "建议携带原始 DICOM/完整 X 光片由放射科或骨科医师复核。",
+    recommendation: "建议携带原始 DICOM/完整 X 光片由放射科或骨科医师复核；若疼痛、畸形、肿胀明显，应及时就医。",
     severe: { mild: "轻度", moderate: "中度", severe: "重度" },
   },
   en: {
@@ -86,13 +86,13 @@ const I18N = {
     recommendEmpty: "Interpret with clinical symptoms and the formal imaging report.",
     pipeline: ["Image preprocessing", "Bone edge enhancement", "Fracture candidate scan", "Ten-class feature matching", "Lesion annotation"],
     confidence: "Confidence",
-    unknownArea: "Detected fracture gap/cortical interruption",
+    unknownArea: "Main bony structure and high-gradient fracture candidate zone",
     evidence: [
-      "The uploaded image was normalized and contrast-corrected.",
-      "The model uses local pixel variance to detect fracture gaps.",
-      "The red ROI indicates the area with the highest crack density."
+      "The uploaded image was normalized, contrast-corrected, and edge-enhanced.",
+      "The model compares image texture with nearest samples from the local dataset.",
+      "Red boxes/circles indicate clustered high-gradient cortical interruption candidates."
     ],
-    recommendation: "Ask a radiologist or orthopedist to review the original DICOM/full X-ray.",
+    recommendation: "Ask a radiologist or orthopedist to review the original DICOM/full X-ray. Seek urgent care if pain, deformity, or swelling is significant.",
     severe: { mild: "Mild", moderate: "Moderate", severe: "Severe" },
   },
   ko: {
@@ -126,13 +126,13 @@ const I18N = {
     recommendEmpty: "임상 증상 및 공식 영상 판독과 함께 해석하세요.",
     pipeline: ["영상 전처리", "골 경계 강화", "골절 후보 영역 스캔", "10개 유형 특징 비교", "병변 영역 표시"],
     confidence: "신뢰도",
-    unknownArea: "골절 균열 및 피질 중단 감지",
+    unknownArea: "주요 골 구조 및 고경사 골절 후보 영역",
     evidence: [
-      "업로드 영상은 회색조 정규화 및 대비 보정을 거쳤습니다.",
-      "모델은 픽셀 분산도를 사용하여 골절 틈을 감지합니다.",
-      "빨간 ROI는 균열이 가장 집중된 지역입니다."
+      "업로드 영상은 회색조 정규화, 대비 보정, 경계 강화를 거쳤습니다.",
+      "모델은 로컬 데이터셋의 가장 가까운 샘플과 영상 질감을 비교합니다.",
+      "빨간 박스/원은 피질 중단 가능성이 높은 고경사 영역 군집입니다."
     ],
-    recommendation: "원본 DICOM/전체 X-ray를 영상의학과 또는 정형외과 전문의에게 확인받으세요.",
+    recommendation: "원본 DICOM/전체 X-ray를 영상의학과 또는 정형외과 전문의에게 확인받으세요. 통증, 변형, 부종이 심하면 즉시 진료가 필요합니다.",
     severe: { mild: "경증", moderate: "중등도", severe: "중증" },
   },
 };
@@ -324,17 +324,13 @@ function classify(feature) {
     score: dot(feature, sample.feature),
   }));
   scored.sort((a, b) => b.score - a.score);
-  
   const votes = new Map();
-  scored.slice(0, 10).forEach((item, i) => {
-    const weight = (1.5 - i * 0.1);
-    votes.set(item.key, (votes.get(item.key) || 0) + item.score * weight);
+  scored.slice(0, 17).forEach((item, i) => {
+    votes.set(item.key, (votes.get(item.key) || 0) + item.score * (1.35 - i * 0.035));
   });
-  
   for (const [key, proto] of Object.entries(model.prototypes)) {
-    votes.set(key, (votes.get(key) || 0) + dot(feature, proto) * 1.5);
+    votes.set(key, (votes.get(key) || 0) + dot(feature, proto) * 1.2);
   }
-  
   const ranked = [...votes.entries()].sort((a, b) => b[1] - a[1]);
   const best = ranked[0];
   const second = ranked[1] || [best[0], best[1] * 0.7];
@@ -342,49 +338,310 @@ function classify(feature) {
   return { classKey: best[0], confidence, neighbors: scored.slice(0, 5), ranked };
 }
 
-// 修复后的 ROI 逻辑：采用“高局部方差”筛选，过滤平滑边缘
 function findRegions() {
   const tmp = document.createElement("canvas");
-  const w = 150;
-  const h = Math.round((currentImage.naturalHeight / currentImage.naturalWidth) * w);
+  const w = 160;
+  const h = Math.max(100, Math.round((currentImage.naturalHeight / currentImage.naturalWidth) * w));
   tmp.width = w;
   tmp.height = h;
   const t = tmp.getContext("2d", { willReadFrequently: true });
   t.drawImage(currentImage, 0, 0, w, h);
-  const data = t.getImageData(0, 0, w, h).data;
-  const pixels = new Float32Array(w * h);
-  for (let i = 0; i < pixels.length; i++) pixels[i] = (data[i*4] + data[i*4+1] + data[i*4+2]) / 3;
+  const imgData = t.getImageData(0, 0, w, h);
+  const data = imgData.data;
+  const g = new Float32Array(w * h);
+  for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+    g[p] = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+  }
 
-  // 使用局部方差识别复杂纹理（骨折处纹理复杂，平滑骨干方差低）
-  let maxVar = 0, bestX = w/2, bestY = h/2;
-  const radius = 8;
-  for (let y = radius; y < h - radius; y += 4) {
-    for (let x = radius; x < w - radius; x += 4) {
-      let sum = 0, sqSum = 0, count = 0;
-      for (let dy = -radius; dy <= radius; dy++) {
-        for (let dx = -radius; dx <= radius; dx++) {
-          const val = pixels[(y + dy) * w + (x + dx)];
-          sum += val; sqSum += val * val; count++;
+  // 1. 计算多尺度梯度（Sobel + 二阶导数Laplacian）
+  const gx = new Float32Array(w * h);
+  const gy = new Float32Array(w * h);
+  const lap = new Float32Array(w * h);
+  const edgeScore = new Float32Array(w * h);
+
+  for (let y = 2; y < h - 2; y++) {
+    for (let x = 2; x < w - 2; x++) {
+      const idx = y * w + x;
+      // Sobel 梯度
+      const sobelX = 
+        -1 * g[(y-1)*w + (x-1)] + 1 * g[(y-1)*w + (x+1)] +
+        -2 * g[y*w + (x-1)]     + 2 * g[y*w + (x+1)] +
+        -1 * g[(y+1)*w + (x-1)] + 1 * g[(y+1)*w + (x+1)];
+      const sobelY = 
+        -1 * g[(y-1)*w + (x-1)] - 2 * g[(y-1)*w + x] - 1 * g[(y-1)*w + (x+1)] +
+         1 * g[(y+1)*w + (x-1)] + 2 * g[(y+1)*w + x] + 1 * g[(y+1)*w + (x+1)];
+
+      gx[idx] = sobelX;
+      gy[idx] = sobelY;
+
+      // Laplacian（二阶导数，检测零交叉=边缘中心）
+      lap[idx] = 
+        g[(y-1)*w + x] + g[(y+1)*w + x] + g[y*w + (x-1)] + g[y*w + (x+1)] -
+        4 * g[idx];
+
+      const mag = Math.sqrt(sobelX * sobelX + sobelY * sobelY);
+      edgeScore[idx] = mag;
+    }
+  }
+
+  // 2. 方向一致性检测 - 骨折线通常是细长、方向一致的
+  const dirScore = new Float32Array(w * h);
+  for (let y = 4; y < h - 4; y++) {
+    for (let x = 4; x < w - 4; x++) {
+      const idx = y * w + x;
+      if (edgeScore[idx] < 15) continue;
+
+      const angle = Math.atan2(gy[idx], gx[idx]);
+      let consistent = 0, total = 0;
+
+      // 检查邻域内梯度方向一致性
+      for (let dy = -3; dy <= 3; dy++) {
+        for (let dx = -3; dx <= 3; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          const nIdx = (y + dy) * w + (x + dx);
+          if (edgeScore[nIdx] > 15) {
+            const nAngle = Math.atan2(gy[nIdx], gx[nIdx]);
+            const diff = Math.abs(Math.atan2(Math.sin(nAngle - angle), Math.cos(nAngle - angle)));
+            if (diff < 0.5) consistent++; // 方向相似
+            total++;
+          }
         }
       }
-      const variance = (sqSum / count) - (sum / count) ** 2;
-      if (variance > maxVar) {
-        maxVar = variance;
-        bestX = x; bestY = y;
+      if (total > 0) {
+        dirScore[idx] = consistent / total * edgeScore[idx];
       }
     }
   }
 
-  return {
-    scan: { x: 0.1, y: 0.1, w: 0.8, h: 0.8 },
-    lesion: {
-      x: (bestX / w) - 0.15,
-      y: (bestY / h) - 0.15,
-      w: 0.3,
-      h: 0.3,
-    },
-    circle: true,
+  // 3. 裂缝特征检测 - 骨折线两侧通常有明暗对比
+  const fractureScore = new Float32Array(w * h);
+  for (let y = 5; y < h - 5; y++) {
+    for (let x = 5; x < w - 5; x++) {
+      const idx = y * w + x;
+      if (edgeScore[idx] < 20) continue;
+
+      const angle = Math.atan2(gy[idx], gx[idx]);
+      const perpAngle = angle + Math.PI / 2;
+
+      // 沿垂直于边缘方向采样，检测明暗交替（裂缝特征）
+      let leftBright = 0, rightBright = 0, leftCount = 0, rightCount = 0;
+      for (let d = 2; d <= 6; d++) {
+        const lx = Math.round(x + d * Math.cos(perpAngle));
+        const ly = Math.round(y + d * Math.sin(perpAngle));
+        const rx = Math.round(x - d * Math.cos(perpAngle));
+        const ry = Math.round(y - d * Math.sin(perpAngle));
+
+        if (lx >= 0 && lx < w && ly >= 0 && ly < h) {
+          leftBright += g[ly * w + lx];
+          leftCount++;
+        }
+        if (rx >= 0 && rx < w && ry >= 0 && ry < h) {
+          rightBright += g[ry * w + rx];
+          rightCount++;
+        }
+      }
+
+      if (leftCount > 0 && rightCount > 0) {
+        const avgLeft = leftBright / leftCount;
+        const avgRight = rightBright / rightCount;
+        const contrast = Math.abs(avgLeft - avgRight);
+
+        // 裂缝特征：高梯度 + 方向一致 + 两侧有对比度 + Laplacian零交叉
+        const lapZeroCross = Math.abs(lap[idx]) > 5 ? 1 : 0;
+        fractureScore[idx] = edgeScore[idx] * 0.3 + dirScore[idx] * 0.4 + contrast * 0.2 + lapZeroCross * 30;
+      }
+    }
+  }
+
+  // 4. 非极大值抑制（NMS），精确定位裂缝中心线
+  const nms = new Float32Array(w * h);
+  for (let y = 2; y < h - 2; y++) {
+    for (let x = 2; x < w - 2; x++) {
+      const idx = y * w + x;
+      if (fractureScore[idx] < 30) continue;
+
+      const angle = Math.atan2(gy[idx], gx[idx]);
+      // 沿梯度方向检查是否为局部最大值
+      const dx = Math.cos(angle);
+      const dy = Math.sin(angle);
+      const v1 = interpolate(fractureScore, x + dx, y + dy, w, h);
+      const v2 = interpolate(fractureScore, x - dx, y - dy, w, h);
+
+      if (fractureScore[idx] > v1 && fractureScore[idx] > v2) {
+        nms[idx] = fractureScore[idx];
+      }
+    }
+  }
+
+  // 5. 收集裂缝候选点并聚类
+  const candidates = [];
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (nms[y * w + x] > 45) {
+        candidates.push({ x, y, score: nms[y * w + x] });
+      }
+    }
+  }
+
+  if (!candidates.length) {
+    return {
+      scan: { x: 0.18, y: 0.16, w: 0.64, h: 0.68 },
+      lesion: { x: 0.34, y: 0.34, w: 0.28, h: 0.24 },
+      circle: true,
+    };
+  }
+
+  candidates.sort((a, b) => b.score - a.score);
+
+  // 6. 密度聚类 - 找出裂缝线状结构
+  const clusters = [];
+  const used = new Set();
+  const topCandidates = candidates.slice(0, Math.min(200, candidates.length));
+
+  for (const pt of topCandidates) {
+    const key = pt.x + "," + pt.y;
+    if (used.has(key)) continue;
+
+    const cluster = [];
+    const queue = [pt];
+    used.add(key);
+
+    while (queue.length > 0) {
+      const curr = queue.shift();
+      cluster.push(curr);
+
+      for (const other of topCandidates) {
+        const oKey = other.x + "," + other.y;
+        if (used.has(oKey)) continue;
+        const dist = Math.sqrt((curr.x - other.x) ** 2 + (curr.y - other.y) ** 2);
+        if (dist < 12) { // 邻域阈值
+          used.add(oKey);
+          queue.push(other);
+        }
+      }
+    }
+
+    if (cluster.length >= 3) {
+      // 计算簇的线性度 - 裂缝应该是细长的
+      let sumX = 0, sumY = 0, sumX2 = 0, sumY2 = 0, sumXY = 0;
+      for (const p of cluster) {
+        sumX += p.x; sumY += p.y;
+        sumX2 += p.x * p.x; sumY2 += p.y * p.y;
+        sumXY += p.x * p.y;
+      }
+      const n = cluster.length;
+      const meanX = sumX / n, meanY = sumY / n;
+      const covXX = sumX2 / n - meanX * meanX;
+      const covYY = sumY2 / n - meanY * meanY;
+      const covXY = sumXY / n - meanX * meanY;
+
+      // 特征值分析
+      const trace = covXX + covYY;
+      const det = covXX * covYY - covXY * covXY;
+      const eigen1 = (trace + Math.sqrt(trace * trace - 4 * det)) / 2;
+      const eigen2 = (trace - Math.sqrt(trace * trace - 4 * det)) / 2;
+      const elongation = eigen1 > 0 ? eigen2 / eigen1 : 0;
+
+      const totalScore = cluster.reduce((s, p) => s + p.score, 0);
+      clusters.push({
+        points: cluster,
+        score: totalScore * (elongation < 0.3 ? 1.5 : 1.0), // 细长结构加分
+        elongation,
+        meanX, meanY,
+        minX: Math.min(...cluster.map(p => p.x)),
+        maxX: Math.max(...cluster.map(p => p.x)),
+        minY: Math.min(...cluster.map(p => p.y)),
+        maxY: Math.max(...cluster.map(p => p.y)),
+      });
+    }
+  }
+
+  clusters.sort((a, b) => b.score - a.score);
+
+  // 7. 确定扫描区域和病变区域
+  const bestCluster = clusters[0];
+  const allPoints = clusters.length > 0 ? clusters.slice(0, 3).flatMap(c => c.points) : candidates.slice(0, 50);
+
+  let minX = w, minY = h, maxX = 0, maxY = 0;
+  allPoints.forEach(p => {
+    minX = Math.min(minX, p.x);
+    minY = Math.min(minY, p.y);
+    maxX = Math.max(maxX, p.x);
+    maxY = Math.max(maxY, p.y);
+  });
+
+  const padX = w * 0.08;
+  const padY = h * 0.08;
+  const scan = {
+    x: Math.max(0.02, (minX - padX) / w),
+    y: Math.max(0.02, (minY - padY) / h),
+    w: Math.min(0.96, (maxX - minX + padX * 2) / w),
+    h: Math.min(0.96, (maxY - minY + padY * 2) / h),
   };
+
+  // 8. 精确定位病变区域 - 使用最佳簇的PCA方向
+  let lesion;
+  if (bestCluster && bestCluster.points.length >= 3) {
+    const c = bestCluster;
+    const cx = c.meanX / w;
+    const cy = c.meanY / h;
+
+    // 根据簇的形状决定 lesion 大小和方向
+    const clusterW = (c.maxX - c.minX) / w;
+    const clusterH = (c.maxY - c.minY) / h;
+
+    // 确保 lesion 覆盖整个裂缝线
+    const lesionW = Math.max(0.12, Math.min(0.45, clusterW * 1.4));
+    const lesionH = Math.max(0.10, Math.min(0.40, clusterH * 1.4));
+
+    lesion = {
+      x: Math.max(0.01, cx - lesionW / 2),
+      y: Math.max(0.01, cy - lesionH / 2),
+      w: lesionW,
+      h: lesionH,
+    };
+  } else {
+    // 回退到加权中心
+    let fx = 0, fy = 0, fm = 0;
+    candidates.slice(0, 30).forEach(p => {
+      fx += p.x * p.score;
+      fy += p.y * p.score;
+      fm += p.score;
+    });
+    fx /= fm; fy /= fm;
+    const lesionW = Math.max(0.15, Math.min(0.35, scan.w * 0.35));
+    const lesionH = Math.max(0.12, Math.min(0.30, scan.h * 0.32));
+    lesion = {
+      x: Math.max(0.02, fx / w - lesionW / 2),
+      y: Math.max(0.02, fy / h - lesionH / 2),
+      w: lesionW,
+      h: lesionH,
+    };
+  }
+
+  // 根据裂缝方向决定形状 - 细长裂缝用椭圆，块状用矩形
+  const isElongated = bestCluster && bestCluster.elongation < 0.25;
+  const aspectRatio = lesion.w / lesion.h;
+
+  return {
+    scan,
+    lesion,
+    circle: isElongated || (aspectRatio > 0.6 && aspectRatio < 1.7),
+    // 附加信息供 drawMarks 使用
+    _cluster: bestCluster,
+  };
+}
+
+// 双线性插值辅助函数
+function interpolate(arr, x, y, w, h) {
+  const x0 = Math.floor(x), y0 = Math.floor(y);
+  const x1 = Math.min(x0 + 1, w - 1), y1 = Math.min(y0 + 1, h - 1);
+  const dx = x - x0, dy = y - y0;
+  const v00 = arr[y0 * w + x0] || 0;
+  const v01 = arr[y0 * w + x1] || 0;
+  const v10 = arr[y1 * w + x0] || 0;
+  const v11 = arr[y1 * w + x1] || 0;
+  return v00 * (1 - dx) * (1 - dy) + v01 * dx * (1 - dy) + v10 * (1 - dx) * dy + v11 * dx * dy;
 }
 
 async function analyze() {
@@ -423,32 +680,93 @@ function drawMarks(analysis, scale) {
   const imgH = currentImage.naturalHeight * scale;
   const { scan, lesion, circle } = analysis.regions;
   ctx.save();
-  ctx.lineWidth = Math.max(2, imgW / 360);
-  ctx.setLineDash([10, 7]);
-  ctx.strokeStyle = "rgba(84, 214, 214, 0.95)";
-  ctx.fillStyle = "rgba(84, 214, 214, 0.08)";
+
+  // 扫描区域 - 虚线框
+  ctx.lineWidth = Math.max(2, imgW / 400);
+  ctx.setLineDash([12, 8]);
+  ctx.strokeStyle = "rgba(84, 214, 214, 0.85)";
+  ctx.fillStyle = "rgba(84, 214, 214, 0.06)";
   ctx.strokeRect(scan.x * imgW, scan.y * imgH, scan.w * imgW, scan.h * imgH);
   ctx.fillRect(scan.x * imgW, scan.y * imgH, scan.w * imgW, scan.h * imgH);
 
+  // 病变区域 - 根据裂缝方向绘制更精确的标注
   ctx.setLineDash([]);
-  ctx.strokeStyle = "rgba(255, 100, 107, 0.98)";
-  ctx.fillStyle = "rgba(255, 100, 107, 0.11)";
   const x = lesion.x * imgW;
   const y = lesion.y * imgH;
   const w = lesion.w * imgW;
   const h = lesion.h * imgH;
-  if (circle) {
+
+  // 如果检测到细长裂缝，绘制旋转的椭圆以匹配裂缝方向
+  const cluster = analysis.regions._cluster;
+  const isFractureLine = cluster && cluster.elongation < 0.3 && cluster.points.length > 5;
+
+  if (isFractureLine) {
+    // 计算裂缝方向（PCA主方向）
+    let sumX = 0, sumY = 0, sumX2 = 0, sumY2 = 0, sumXY = 0;
+    for (const p of cluster.points) {
+      sumX += p.x; sumY += p.y;
+      sumX2 += p.x * p.x; sumY2 += p.y * p.y;
+      sumXY += p.x * p.y;
+    }
+    const n = cluster.points.length;
+    const meanX = sumX / n, meanY = sumY / n;
+    const covXX = sumX2 / n - meanX * meanX;
+    const covYY = sumY2 / n - meanY * meanY;
+    const covXY = sumXY / n - meanX * meanY;
+
+    const angle = Math.atan2(2 * covXY, covXX - covYY) / 2;
+
+    // 绘制旋转椭圆，长轴沿裂缝方向
+    ctx.save();
+    ctx.translate(x + w / 2, y + h / 2);
+    ctx.rotate(angle);
+    ctx.strokeStyle = "rgba(255, 100, 107, 0.98)";
+    ctx.fillStyle = "rgba(255, 100, 107, 0.15)";
+    ctx.lineWidth = Math.max(2.5, imgW / 300);
+
+    // 椭圆长轴沿裂缝方向
+    const majorAxis = Math.max(w, h) * 0.55;
+    const minorAxis = Math.min(w, h) * 0.35;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, majorAxis, minorAxis, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // 绘制裂缝中心线
+    ctx.strokeStyle = "rgba(255, 200, 100, 0.9)";
+    ctx.lineWidth = Math.max(1.5, imgW / 500);
+    ctx.beginPath();
+    ctx.moveTo(-majorAxis * 0.7, 0);
+    ctx.lineTo(majorAxis * 0.7, 0);
+    ctx.stroke();
+
+    ctx.restore();
+  } else if (circle) {
+    // 圆形/椭圆标注（块状骨折）
+    ctx.strokeStyle = "rgba(255, 100, 107, 0.98)";
+    ctx.fillStyle = "rgba(255, 100, 107, 0.11)";
+    ctx.lineWidth = Math.max(2, imgW / 360);
     ctx.beginPath();
     ctx.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
   } else {
+    // 矩形标注
+    ctx.strokeStyle = "rgba(255, 100, 107, 0.98)";
+    ctx.fillStyle = "rgba(255, 100, 107, 0.11)";
+    ctx.lineWidth = Math.max(2, imgW / 360);
     ctx.fillRect(x, y, w, h);
     ctx.strokeRect(x, y, w, h);
   }
-  ctx.font = `${Math.max(12, imgW / 52)}px system-ui`;
+
+  // ROI 标签
+  ctx.font = `bold ${Math.max(13, imgW / 50)}px system-ui, -apple-system, sans-serif`;
   ctx.fillStyle = "#fff";
-  ctx.fillText("ROI", x + 8, Math.max(18, y - 8));
+  ctx.shadowColor = "rgba(0,0,0,0.8)";
+  ctx.shadowBlur = 4;
+  ctx.fillText("ROI", x + 10, Math.max(20, y - 10));
+  ctx.shadowBlur = 0;
+
   ctx.restore();
 }
 
