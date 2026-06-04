@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BoneVision AI | 骨折医学影像分析</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">BV</div>
+        <div>
+          <strong>BoneVision AI</strong>
+          <span data-i18n="subtitle">骨折医学影像分析平台</span>
+        </div>
+      </div>
+      <div class="language" aria-label="Language">
+        <button class="lang active" data-lang="zh">中文</button>
+        <button class="lang" data-lang="en">English</button>
+        <button class="lang" data-lang="ko">한국어</button>
+      </div>
+    </header>
+
+    <main class="shell">
+      <aside class="panel left-panel">
+        <section class="block">
+          <h2 data-i18n="uploadTitle">影像上传</h2>
+          <label class="dropzone" id="dropzone">
+            <input id="fileInput" type="file" accept="image/*" />
+            <span class="drop-icon">+</span>
+            <strong data-i18n="dropMain">上传 X 光 / CT / 骨骼影像</strong>
+            <small data-i18n="dropSub">支持 JPEG、PNG、WebP，分析在本地浏览器完成</small>
+          </label>
+          <button id="analyzeBtn" class="primary" disabled>
+            <span class="btn-icon">▶</span>
+            <span data-i18n="analyze">开始分析</span>
+          </button>
+        </section>
+
+        <section class="block">
+          <h2 data-i18n="modelTitle">AI 检测流程</h2>
+          <div class="pipeline" id="pipeline"></div>
+        </section>
+
+        <section class="block">
+          <h2 data-i18n="typeTitle">十种骨折类型</h2>
+          <div class="type-list" id="typeList"></div>
+        </section>
+
+        <section class="notice">
+          <strong data-i18n="noticeTitle">临床提示</strong>
+          <p data-i18n="noticeBody">本工具用于课程/原型展示和辅助阅读，不替代放射科医师诊断。</p>
+        </section>
+      </aside>
+
+      <section class="viewer-panel">
+        <div class="viewer-toolbar">
+          <div>
+            <strong id="imageName" data-i18n="emptyName">未加载影像</strong>
+            <span id="imageMeta" data-i18n="emptyMeta">请上传图像开始</span>
+          </div>
+          <div class="tools">
+            <button class="tool" id="zoomOut" title="Zoom out">−</button>
+            <button class="tool" id="zoomIn" title="Zoom in">+</button>
+            <button class="tool" id="resetView" title="Reset">↺</button>
+            <button class="tool active" id="toggleMarks" title="Annotations">□</button>
+          </div>
+        </div>
+
+        <div class="canvas-wrap" id="canvasWrap">
+          <div class="empty-state" id="emptyState">
+            <div class="xray-icon"></div>
+            <strong data-i18n="emptyCanvasTitle">等待医学影像</strong>
+            <span data-i18n="emptyCanvasSub">上传后会显示扫描区域、骨折候选框和分型结果</span>
+          </div>
+          <canvas id="imageCanvas"></canvas>
+          <div class="scan-band" id="scanBand"></div>
+        </div>
+      </section>
+
+      <aside class="panel result-panel">
+        <section class="result-head">
+          <div>
+            <h2 data-i18n="resultTitle">结果分析</h2>
+            <p id="modelStatus" data-i18n="modelLoading">正在加载本地骨折特征库...</p>
+          </div>
+          <span class="status" id="statusBadge" data-i18n="statusIdle">待分析</span>
+        </section>
+
+        <section class="result-card dominant" id="diagnosisCard">
+          <span data-i18n="diagnosisType">预测骨折类型</span>
+          <strong id="prediction">—</strong>
+          <div class="confidence-row">
+            <div class="confidence-bar"><i id="confidenceFill"></i></div>
+            <b id="confidenceText">0%</b>
+          </div>
+        </section>
+
+        <section class="result-grid">
+          <div class="result-card">
+            <span data-i18n="scanArea">扫描区域</span>
+            <strong id="scanAreaText">—</strong>
+          </div>
+          <div class="result-card">
+            <span data-i18n="severity">严重程度</span>
+            <strong id="severityText">—</strong>
+          </div>
+        </section>
+
+        <section class="analysis-box">
+          <h3 data-i18n="analysisTitle">影像分析说明</h3>
+          <p id="analysisText" data-i18n="analysisEmpty">上传并分析后，这里会显示模型依据、可疑区域和阅读建议。</p>
+        </section>
+
+        <section class="analysis-box">
+          <h3 data-i18n="evidenceTitle">模型依据</h3>
+          <ul id="evidenceList">
+            <li data-i18n="evidenceEmpty">等待分析结果。</li>
+          </ul>
+        </section>
+
+        <section class="analysis-box recommendation">
+          <h3 data-i18n="recommendTitle">建议</h3>
+          <p id="recommendText" data-i18n="recommendEmpty">请结合临床症状和正式影像报告判断。</p>
+        </section>
+      </aside>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
