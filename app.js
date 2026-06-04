@@ -325,7 +325,6 @@ function classify(feature) {
   }));
   scored.sort((a, b) => b.score - a.score);
   
-  // 优化：增强权重，压制噪声
   const votes = new Map();
   scored.slice(0, 10).forEach((item, i) => {
     const weight = (1.5 - i * 0.1);
@@ -346,70 +345,52 @@ function classify(feature) {
 function findRegions() {
   const tmp = document.createElement("canvas");
   const w = 120;
-  const h = Math.max(80, Math.round((currentImage.naturalHeight / currentImage.naturalWidth) * w));
+  const h = Math.round((currentImage.naturalHeight / currentImage.naturalWidth) * w);
   tmp.width = w;
   tmp.height = h;
   const t = tmp.getContext("2d", { willReadFrequently: true });
   t.drawImage(currentImage, 0, 0, w, h);
   const data = t.getImageData(0, 0, w, h).data;
+  
   const g = new Float32Array(w * h);
-  for (let i = 0, p = 0; i < data.length; i += 4, p++) g[p] = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+  for (let i = 0, p = 0; i < data.length; i += 4, p++) g[p] = (data[i] + data[i+1] + data[i+2]) / 3;
+
   const pts = [];
-  for (let y = 2; y < h - 2; y++) {
-    for (let x = 2; x < w - 2; x++) {
+  for (let y = 5; y < h - 5; y++) {
+    for (let x = 5; x < w - 5; x++) {
       const gx = g[y * w + x + 1] - g[y * w + x - 1];
       const gy = g[(y + 1) * w + x] - g[(y - 1) * w + x];
       const mag = Math.sqrt(gx * gx + gy * gy);
-      if (mag > 42 && g[y * w + x] > 38) pts.push({ x, y, mag });
+      if (mag > 60) pts.push({ x, y, mag });
     }
   }
-  pts.sort((a, b) => b.mag - a.mag);
-  const top = pts.slice(0, Math.max(80, Math.floor(pts.length * 0.18)));
-  
-  // 优化：基于空间聚类中心
-  const cluster = top.slice(0, 20);
-  let sumX = 0, sumY = 0;
-  cluster.forEach(p => { sumX += p.x; sumY += p.y; });
-  const centerX = sumX / (cluster.length || 1);
-  const centerY = sumY / (cluster.length || 1);
-  
-  if (!top.length) {
-    return {
-      scan: { x: 0.18, y: 0.16, w: 0.64, h: 0.68 },
-      lesion: { x: 0.34, y: 0.34, w: 0.28, h: 0.24 },
-      circle: true,
-    };
+
+  let bestX = w / 2, bestY = h / 2, maxDensity = 0;
+  const win = 30; 
+  for (let y = 0; y < h - win; y += 5) {
+    for (let x = 0; x < w - win; x += 5) {
+      let density = pts.filter(p => p.x > x && p.x < x + win && p.y > y && p.y < y + win).length;
+      if (density > maxDensity) {
+        maxDensity = density;
+        bestX = x + win / 2;
+        bestY = y + win / 2;
+      }
+    }
   }
-  
-  let minX = w, minY = h, maxX = 0, maxY = 0;
-  top.forEach((p) => {
-    minX = Math.min(minX, p.x);
-    minY = Math.min(minY, p.y);
-    maxX = Math.max(maxX, p.x);
-    maxY = Math.max(maxY, p.y);
-  });
-  
-  const padX = w * 0.06;
-  const padY = h * 0.06;
-  const scan = {
-    x: Math.max(0.03, (minX - padX) / w),
-    y: Math.max(0.03, (minY - padY) / h),
-    w: Math.min(0.94, (maxX - minX + padX * 2) / w),
-    h: Math.min(0.94, (maxY - minY + padY * 2) / h),
-  };
-  
-  const lesionW = Math.max(0.18, Math.min(0.30, scan.w * 0.35));
-  const lesionH = Math.max(0.16, Math.min(0.28, scan.h * 0.35));
+
+  const scan = { x: 0.1, y: 0.1, w: 0.8, h: 0.8 };
+  const lesionW = 0.25; 
+  const lesionH = 0.25;
   
   return {
     scan,
     lesion: {
-      x: Math.max(0.02, (centerX / w) - lesionW / 2),
-      y: Math.max(0.02, (centerY / h) - lesionH / 2),
+      x: Math.max(0.05, (bestX / w) - lesionW / 2),
+      y: Math.max(0.05, (bestY / h) - lesionH / 2),
       w: lesionW,
       h: lesionH,
     },
-    circle: Math.abs(lesionW - lesionH) < 0.08,
+    circle: true,
   };
 }
 
@@ -550,7 +531,7 @@ document.getElementById("toggleMarks").addEventListener("click", (event) => {
   event.currentTarget.classList.toggle("active", marksVisible);
   drawImage();
 });
-window.addEventListener("resize", drawImage);
+window.resizeTo = window.addEventListener("resize", drawImage);
 
 setText();
 loadModel().catch((err) => {
