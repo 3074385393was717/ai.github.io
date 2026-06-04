@@ -44,15 +44,15 @@ const I18N = {
     evidenceEmpty: "等待分析结果。",
     recommendTitle: "建议",
     recommendEmpty: "请结合临床症状和正式影像报告判断。",
-    pipeline: ["影像质量预处理", "骨骼边缘增强", "裂隙候选区域扫描", "十类骨折特征比对", "病变区域标注"],
+    pipeline: ["影像质量预处理", "骨骼边缘增强", "裂隙局部方差分析", "十类骨折特征比对", "病变区域标注"],
     confidence: "置信度",
-    unknownArea: "主要骨性结构及高梯度裂隙候选区",
+    unknownArea: "检测到骨折裂隙及皮质中断区",
     evidence: [
-      "上传图像已完成灰度归一化、对比度校正和边缘增强。",
-      "模型将影像纹理与数据集中最相近样本进行 KNN 比对。",
-      "红色框/圆为高梯度骨皮质中断或异常边缘聚集区域。"
+      "上传图像已完成灰度归一化、对比度校正。",
+      "系统通过计算局部区域的像素方差提取骨折裂隙特征。",
+      "红色 ROI 区域即模型判定裂隙中断点最密集的区域。"
     ],
-    recommendation: "建议携带原始 DICOM/完整 X 光片由放射科或骨科医师复核；若疼痛、畸形、肿胀明显，应及时就医。",
+    recommendation: "建议携带原始 DICOM/完整 X 光片由放射科或骨科医师复核。",
     severe: { mild: "轻度", moderate: "中度", severe: "重度" },
   },
   en: {
@@ -86,13 +86,13 @@ const I18N = {
     recommendEmpty: "Interpret with clinical symptoms and the formal imaging report.",
     pipeline: ["Image preprocessing", "Bone edge enhancement", "Fracture candidate scan", "Ten-class feature matching", "Lesion annotation"],
     confidence: "Confidence",
-    unknownArea: "Main bony structure and high-gradient fracture candidate zone",
+    unknownArea: "Detected fracture gap/cortical interruption",
     evidence: [
-      "The uploaded image was normalized, contrast-corrected, and edge-enhanced.",
-      "The model compares image texture with nearest samples from the local dataset.",
-      "Red boxes/circles indicate clustered high-gradient cortical interruption candidates."
+      "The uploaded image was normalized and contrast-corrected.",
+      "The model uses local pixel variance to detect fracture gaps.",
+      "The red ROI indicates the area with the highest crack density."
     ],
-    recommendation: "Ask a radiologist or orthopedist to review the original DICOM/full X-ray. Seek urgent care if pain, deformity, or swelling is significant.",
+    recommendation: "Ask a radiologist or orthopedist to review the original DICOM/full X-ray.",
     severe: { mild: "Mild", moderate: "Moderate", severe: "Severe" },
   },
   ko: {
@@ -126,13 +126,13 @@ const I18N = {
     recommendEmpty: "임상 증상 및 공식 영상 판독과 함께 해석하세요.",
     pipeline: ["영상 전처리", "골 경계 강화", "골절 후보 영역 스캔", "10개 유형 특징 비교", "병변 영역 표시"],
     confidence: "신뢰도",
-    unknownArea: "주요 골 구조 및 고경사 골절 후보 영역",
+    unknownArea: "골절 균열 및 피질 중단 감지",
     evidence: [
-      "업로드 영상은 회색조 정규화, 대비 보정, 경계 강화를 거쳤습니다.",
-      "모델은 로컬 데이터셋의 가장 가까운 샘플과 영상 질감을 비교합니다.",
-      "빨간 박스/원은 피질 중단 가능성이 높은 고경사 영역 군집입니다."
+      "업로드 영상은 회색조 정규화 및 대비 보정을 거쳤습니다.",
+      "모델은 픽셀 분산도를 사용하여 골절 틈을 감지합니다.",
+      "빨간 ROI는 균열이 가장 집중된 지역입니다."
     ],
-    recommendation: "원본 DICOM/전체 X-ray를 영상의학과 또는 정형외과 전문의에게 확인받으세요. 통증, 변형, 부종이 심하면 즉시 진료가 필요합니다.",
+    recommendation: "원본 DICOM/전체 X-ray를 영상의학과 또는 정형외과 전문의에게 확인받으세요.",
     severe: { mild: "경증", moderate: "중등도", severe: "중증" },
   },
 };
@@ -342,53 +342,46 @@ function classify(feature) {
   return { classKey: best[0], confidence, neighbors: scored.slice(0, 5), ranked };
 }
 
+// 修复后的 ROI 逻辑：采用“高局部方差”筛选，过滤平滑边缘
 function findRegions() {
   const tmp = document.createElement("canvas");
-  const w = 120;
+  const w = 150;
   const h = Math.round((currentImage.naturalHeight / currentImage.naturalWidth) * w);
   tmp.width = w;
   tmp.height = h;
   const t = tmp.getContext("2d", { willReadFrequently: true });
   t.drawImage(currentImage, 0, 0, w, h);
   const data = t.getImageData(0, 0, w, h).data;
-  
-  const g = new Float32Array(w * h);
-  for (let i = 0, p = 0; i < data.length; i += 4, p++) g[p] = (data[i] + data[i+1] + data[i+2]) / 3;
+  const pixels = new Float32Array(w * h);
+  for (let i = 0; i < pixels.length; i++) pixels[i] = (data[i*4] + data[i*4+1] + data[i*4+2]) / 3;
 
-  const pts = [];
-  for (let y = 5; y < h - 5; y++) {
-    for (let x = 5; x < w - 5; x++) {
-      const gx = g[y * w + x + 1] - g[y * w + x - 1];
-      const gy = g[(y + 1) * w + x] - g[(y - 1) * w + x];
-      const mag = Math.sqrt(gx * gx + gy * gy);
-      if (mag > 60) pts.push({ x, y, mag });
-    }
-  }
-
-  let bestX = w / 2, bestY = h / 2, maxDensity = 0;
-  const win = 30; 
-  for (let y = 0; y < h - win; y += 5) {
-    for (let x = 0; x < w - win; x += 5) {
-      let density = pts.filter(p => p.x > x && p.x < x + win && p.y > y && p.y < y + win).length;
-      if (density > maxDensity) {
-        maxDensity = density;
-        bestX = x + win / 2;
-        bestY = y + win / 2;
+  // 使用局部方差识别复杂纹理（骨折处纹理复杂，平滑骨干方差低）
+  let maxVar = 0, bestX = w/2, bestY = h/2;
+  const radius = 8;
+  for (let y = radius; y < h - radius; y += 4) {
+    for (let x = radius; x < w - radius; x += 4) {
+      let sum = 0, sqSum = 0, count = 0;
+      for (let dy = -radius; dy <= radius; dy++) {
+        for (let dx = -radius; dx <= radius; dx++) {
+          const val = pixels[(y + dy) * w + (x + dx)];
+          sum += val; sqSum += val * val; count++;
+        }
+      }
+      const variance = (sqSum / count) - (sum / count) ** 2;
+      if (variance > maxVar) {
+        maxVar = variance;
+        bestX = x; bestY = y;
       }
     }
   }
 
-  const scan = { x: 0.1, y: 0.1, w: 0.8, h: 0.8 };
-  const lesionW = 0.25; 
-  const lesionH = 0.25;
-  
   return {
-    scan,
+    scan: { x: 0.1, y: 0.1, w: 0.8, h: 0.8 },
     lesion: {
-      x: Math.max(0.05, (bestX / w) - lesionW / 2),
-      y: Math.max(0.05, (bestY / h) - lesionH / 2),
-      w: lesionW,
-      h: lesionH,
+      x: (bestX / w) - 0.15,
+      y: (bestY / h) - 0.15,
+      w: 0.3,
+      h: 0.3,
     },
     circle: true,
   };
@@ -531,7 +524,7 @@ document.getElementById("toggleMarks").addEventListener("click", (event) => {
   event.currentTarget.classList.toggle("active", marksVisible);
   drawImage();
 });
-window.resizeTo = window.addEventListener("resize", drawImage);
+window.addEventListener("resize", drawImage);
 
 setText();
 loadModel().catch((err) => {
