@@ -150,11 +150,188 @@ const severityMap = {
   spiral: "moderate",
 };
 
+// ============================================
+// 辅助数学函数
+// ============================================
 function dot(a, b) {
   let s = 0;
   for (let i = 0; i < a.length; i++) s += a[i] * b[i];
   return s;
 }
+
+// ============================================
+// Otsu 自动阈值算法
+// ============================================
+function otsuThreshold(hist, total) {
+  let sum = 0;
+  for (let i = 0; i < 256; i++) sum += i * hist[i];
+
+  let sumB = 0, wB = 0, maxVariance = 0;
+  let threshold = 128;
+
+  for (let t = 0; t < 256; t++) {
+    wB += hist[t];
+    if (wB === 0) continue;
+    const wF = total - wB;
+    if (wF === 0) break;
+    sumB += t * hist[t];
+    const mB = sumB / wB;
+    const mF = (sum - sumB) / wF;
+    const variance = wB * wF * (mB - mF) * (mB - mF);
+    if (variance > maxVariance) {
+      maxVariance = variance;
+      threshold = t;
+    }
+  }
+  return threshold;
+}
+
+// ============================================
+// 形态学闭运算（填充骨骼内部空洞）
+// ============================================
+function morphologicalClose(mask, w, h, radius) {
+  const temp = new Uint8Array(mask);
+  // 膨胀
+  for (let y = radius; y < h - radius; y++) {
+    for (let x = radius; x < w - radius; x++) {
+      let max = 0;
+      for (let dy = -radius; dy <= radius; dy++) {
+        for (let dx = -radius; dx <= radius; dx++) {
+          max = Math.max(max, mask[(y + dy) * w + (x + dx)]);
+        }
+      }
+      temp[y * w + x] = max;
+    }
+  }
+  // 腐蚀
+  for (let y = radius; y < h - radius; y++) {
+    for (let x = radius; x < w - radius; x++) {
+      let min = 1;
+      for (let dy = -radius; dy <= radius; dy++) {
+        for (let dx = -radius; dx <= radius; dx++) {
+          min = Math.min(min, temp[(y + dy) * w + (x + dx)]);
+        }
+      }
+      mask[y * w + x] = min;
+    }
+  }
+}
+
+// ============================================
+// DBSCAN 空间聚类
+// ============================================
+function dbscanClusters(points, eps, minPts) {
+  const visited = new Set();
+  const clusters = [];
+
+  for (let i = 0; i < points.length; i++) {
+    if (visited.has(i)) continue;
+    visited.add(i);
+
+    const neighbors = [];
+    for (let j = 0; j < points.length; j++) {
+      const dx = points[i].x - points[j].x;
+      const dy = points[i].y - points[j].y;
+      if (Math.sqrt(dx * dx + dy * dy) < eps) neighbors.push(j);
+    }
+
+    if (neighbors.length < minPts) continue;
+
+    const cluster = [points[i]];
+    const queue = [...neighbors];
+    const inCluster = new Set([i]);
+
+    while (queue.length) {
+      const j = queue.shift();
+      if (inCluster.has(j)) continue;
+      inCluster.add(j);
+      cluster.push(points[j]);
+
+      const newNeighbors = [];
+      for (let k = 0; k < points.length; k++) {
+        if (inCluster.has(k)) continue;
+        const dx = points[j].x - points[k].x;
+        const dy = points[j].y - points[k].y;
+        if (Math.sqrt(dx * dx + dy * dy) < eps) newNeighbors.push(k);
+      }
+
+      if (newNeighbors.length >= minPts) {
+        queue.push(...newNeighbors);
+      }
+    }
+
+    clusters.push(cluster);
+  }
+
+  return clusters;
+}
+
+// ============================================
+// PCA 主成分分析（计算主方向）
+// ============================================
+function pcaAnalysis(points) {
+  const n = points.length;
+  if (n === 0) return { center: { x: 0.5, y: 0.5 }, majorAxis: 0.2, minorAxis: 0.2, angle: 0 };
+
+  const meanX = points.reduce((a, b) => a + b.x, 0) / n;
+  const meanY = points.reduce((a, b) => a + b.y, 0) / n;
+
+  let covXX = 0, covYY = 0, covXY = 0;
+  for (const p of points) {
+    const dx = p.x - meanX;
+    const dy = p.y - meanY;
+    covXX += dx * dx;
+    covYY += dy * dy;
+    covXY += dx * dy;
+  }
+  covXX /= n;
+  covYY /= n;
+  covXY /= n;
+
+  const trace = covXX + covYY;
+  const det = covXX * covYY - covXY * covXY;
+  const eigenvalue1 = (trace + Math.sqrt(Math.max(0, trace * trace - 4 * det))) / 2;
+  const eigenvalue2 = (trace - Math.sqrt(Math.max(0, trace * trace - 4 * det))) / 2;
+
+  const angle = Math.atan2(2 * covXY, covXX - covYY) / 2;
+
+  return {
+    center: { x: meanX, y: meanY },
+    majorAxis: Math.sqrt(Math.max(0, eigenvalue1)) * 4,
+    minorAxis: Math.sqrt(Math.max(0, eigenvalue2)) * 4,
+    angle
+  };
+}
+
+// ============================================
+// 降级方案（当检测失败时）
+// ============================================
+function fallbackRegions(classKey, scan) {
+  const defaultScan = scan || { x: 0.18, y: 0.16, w: 0.64, h: 0.68 };
+  return {
+    scan: defaultScan,
+    lesion: { x: 0.34, y: 0.34, w: 0.28, h: 0.24 },
+    circle: true,
+    angle: 0,
+    multiLesions: []
+  };
+}
+
+// ============================================
+// 骨折类型配置（指导定位策略）
+// ============================================
+const fractureTypeConfig = {
+  hairline: { minClusterSize: 3, elongationThreshold: 3.0, lineSearch: true, name: "发丝状" },
+  oblique: { minClusterSize: 5, elongationThreshold: 2.5, angleRange: [0.3, 1.2], name: "斜形" },
+  spiral: { minClusterSize: 8, elongationThreshold: 2.0, curveSearch: true, name: "螺旋形" },
+  comminuted: { minClusterSize: 2, maxClusters: 5, multiFocus: true, name: "粉碎性" },
+  fracture_dislocation: { minClusterSize: 5, jointFocus: true, name: "骨折脱位" },
+  pathological: { minClusterSize: 4, lyticSearch: true, name: "病理性" },
+  greenstick: { minClusterSize: 3, cortexAsymmetry: true, name: "青枝" },
+  longitudinal: { minClusterSize: 5, elongationThreshold: 4.0, verticalBias: true, name: "纵向" },
+  impacted: { minClusterSize: 4, densityFocus: true, name: "嵌顿性" },
+  avulsion: { minClusterSize: 3, fragmentSearch: true, name: "撕脱性" }
+};
 
 function setText() {
   document.documentElement.lang = lang === "zh" ? "zh-CN" : lang === "ko" ? "ko" : "en";
@@ -224,7 +401,7 @@ function handleFile(file) {
       canvas.style.display = "block";
       analyzeBtn.disabled = !model;
       document.getElementById("imageName").textContent = file.name;
-      document.getElementById("imageMeta").textContent = `${img.naturalWidth} x ${img.naturalHeight}px`;
+      document.getElementById("imageMeta").textContent = `${img.naturalWidth} × ${img.naturalHeight}px`;
       resetResult();
       drawImage();
     };
@@ -316,6 +493,7 @@ function extractFeature(sourceCanvas) {
   const len = Math.sqrt(feat.reduce((a, b) => a + b * b, 0)) + 1e-6;
   return feat.map((v) => v / len);
 }
+
 function classify(feature) {
   const scored = model.samples.map((sample) => ({
     key: sample.classKey,
@@ -334,328 +512,202 @@ function classify(feature) {
   const best = ranked[0];
   const second = ranked[1] || [best[0], best[1] * 0.7];
   const confidence = Math.max(0.46, Math.min(0.97, 0.55 + (best[1] - second[1]) * 2.6));
-
-  // 返回骨折类型几何特征，用于指导定位
-  const typePatterns = {
-    oblique: { angle: 45, isLinear: true, width: 0.08, height: 0.35 },
-    spiral: { angle: null, isCurved: true, width: 0.12, height: 0.40 },
-    transverse: { angle: 90, isLinear: true, width: 0.35, height: 0.08 },
-    longitudinal: { angle: 0, isLinear: true, width: 0.08, height: 0.35 },
-    greenstick: { angle: null, isPartial: true, width: 0.20, height: 0.15 },
-    comminuted: { isFragmented: true, width: 0.30, height: 0.25 },
-    avulsion: { isFragment: true, width: 0.15, height: 0.12 },
-    impacted: { isCompressed: true, width: 0.18, height: 0.15 },
-    fracture_dislocation: { isDisplaced: true, width: 0.25, height: 0.20 },
-    pathological: { isDestructive: true, width: 0.30, height: 0.25 },
-    hairline: { angle: null, isFaint: true, width: 0.06, height: 0.30 },
-  };
-
-  return { 
-    classKey: best[0], 
-    confidence, 
-    neighbors: scored.slice(0, 5), 
-    ranked,
-    _pattern: typePatterns[best[0]] || { width: 0.20, height: 0.20 }
-  };
+  return { classKey: best[0], confidence, neighbors: scored.slice(0, 5), ranked };
 }
 
-function findRegions(pattern) {
-  // 使用足够分辨率进行分析
-  const tmp = document.createElement("canvas");
-  const w = 240;
-  const h = Math.max(160, Math.round((currentImage.naturalHeight / currentImage.naturalWidth) * w));
-  tmp.width = w;
-  tmp.height = h;
-  const t = tmp.getContext("2d", { willReadFrequently: true });
-  t.drawImage(currentImage, 0, 0, w, h);
-  const imgData = t.getImageData(0, 0, w, h);
-  const data = imgData.data;
+// ============================================
+// 改进版 findRegions() - 多阶段智能骨折定位
+// ============================================
+function findRegions(classKey) {
+  if (!currentImage) return fallbackRegions(classKey);
 
-  // 提取灰度
-  const gray = new Float32Array(w * h);
-  for (let i = 0, p = 0; i < data.length; i += 4, p++) {
-    gray[p] = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+  const config = fractureTypeConfig[classKey] || fractureTypeConfig.hairline;
+
+  // 阶段 0: 多尺度图像金字塔构建
+  const scales = [0.5, 0.25, 0.125];
+  const pyramid = scales.map(scale => {
+    const w = Math.max(60, Math.round(currentImage.naturalWidth * scale));
+    const h = Math.max(40, Math.round(currentImage.naturalHeight * scale));
+    const tmp = document.createElement("canvas");
+    tmp.width = w;
+    tmp.height = h;
+    const t = tmp.getContext("2d", { willReadFrequently: true });
+    t.drawImage(currentImage, 0, 0, w, h);
+    return { canvas: tmp, ctx: t, w, h, scale };
+  });
+
+  // 阶段 1: 自适应骨骼掩膜生成（使用中间尺度 0.25）
+  const base = pyramid[1];
+  const baseData = base.ctx.getImageData(0, 0, base.w, base.h).data;
+  const baseGray = new Float32Array(base.w * base.h);
+
+  const hist = new Array(256).fill(0);
+  for (let i = 0, p = 0; i < baseData.length; i += 4, p++) {
+    const g = 0.299 * baseData[i] + 0.587 * baseData[i + 1] + 0.114 * baseData[i + 2];
+    baseGray[p] = g;
+    hist[Math.floor(g)]++;
   }
 
-  // ============================================================
-  // 基于X线骨折诊断标准的精准定位算法
-  // 核心：骨折线是骨皮质内的"低密度透亮线"，不是边缘
-  // ============================================================
-
-  // 1. 确定骨皮质亮度阈值
-  const sorted = Array.from(gray).sort((a, b) => b - a);
-  const boneThreshold = sorted[Math.floor(sorted.length * 0.22)];
-
-  // 2. 定义检测方向（8个主要方向 + 根据骨折类型调整）
-  const baseDirections = [
-    { dx: 1, dy: 0, angle: 0 },
-    { dx: 0, dy: 1, angle: 90 },
-    { dx: 1, dy: 1, angle: 45 },
-    { dx: 1, dy: -1, angle: 135 },
-    { dx: 2, dy: 1, angle: 26.6 },
-    { dx: 1, dy: 2, angle: 63.4 },
-    { dx: 2, dy: -1, angle: 153.4 },
-    { dx: 1, dy: -2, angle: 116.6 },
-  ];
-
-  // 如果分类提供了期望角度，优先使用该方向附近的检测
-  let directions = [...baseDirections];
-  if (pattern && pattern.angle !== null) {
-    const expectedAngle = pattern.angle;
-    directions.sort((a, b) => {
-      const diffA = Math.abs(a.angle - expectedAngle);
-      const diffB = Math.abs(b.angle - expectedAngle);
-      return diffA - diffB;
-    });
+  const boneThreshold = otsuThreshold(hist, base.w * base.h);
+  const boneMask = new Uint8Array(base.w * base.h);
+  for (let i = 0; i < baseGray.length; i++) {
+    boneMask[i] = (baseGray[i] > boneThreshold * 0.6 && baseGray[i] < 240) ? 1 : 0;
   }
+  morphologicalClose(boneMask, base.w, base.h, 2);
 
-  // 3. 检测"骨皮质内的暗线"——骨折的核心X线征象
-  const fracturePoints = [];
+  // 阶段 2: 多尺度梯度融合检测
+  const allFractureCandidates = [];
 
-  for (let y = 6; y < h - 6; y++) {
-    for (let x = 6; x < w - 6; x++) {
-      const idx = y * w + x;
+  pyramid.forEach(({ w, h, ctx, scale }) => {
+    const data = ctx.getImageData(0, 0, w, h).data;
+    const gray = new Float32Array(w * h);
+    for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+      gray[p] = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+    }
 
-      // 跳过非骨组织区域
-      if (gray[idx] < boneThreshold * 0.35) continue;
+    const gradients = [];
+    for (let y = 2; y < h - 2; y++) {
+      for (let x = 2; x < w - 2; x++) {
+        const p = y * w + x;
 
-      let bestScore = 0;
-      let bestDir = null;
-
-      for (const dir of directions) {
-        // 沿方向采样13个点
-        const profile = [];
-        for (let d = -6; d <= 6; d++) {
-          const sx = Math.round(x + d * dir.dx);
-          const sy = Math.round(y + d * dir.dy);
-          if (sx >= 0 && sx < w && sy >= 0 && sy < h) {
-            profile.push({
-              val: gray[sy * w + sx],
-              dist: d,
-              isCenter: d === 0
-            });
-          }
+        // 骨骼掩膜过滤（仅在基础尺度上）
+        if (scale === 0.25) {
+          const maskX = Math.floor(x * (base.w / w));
+          const maskY = Math.floor(y * (base.h / h));
+          if (!boneMask[maskY * base.w + maskX]) continue;
         }
 
-        if (profile.length < 11) continue;
+        // Sobel 算子
+        const gx = (gray[p - w + 1] + 2 * gray[p + 1] + gray[p + w + 1]) -
+                   (gray[p - w - 1] + 2 * gray[p - 1] + gray[p + w - 1]);
+        const gy = (gray[p - w - 1] + 2 * gray[p - w] + gray[p - w + 1]) -
+                   (gray[p + w - 1] + 2 * gray[p + w] + gray[p + w + 1]);
 
-        const center = profile.find(p => p.isCenter);
-        const leftSide = profile.filter(p => p.dist < -2);
-        const rightSide = profile.filter(p => p.dist > 2);
+        // 对角线梯度（检测斜形/螺旋骨折）
+        const gd1 = (gray[p - w + 1] + gray[p + 1] + gray[p + w]) -
+                    (gray[p - w] + gray[p - 1] + gray[p + w - 1]);
+        const gd2 = (gray[p - w] + gray[p - 1] + gray[p + w - 1]) -
+                    (gray[p - w + 1] + gray[p + 1] + gray[p + w]);
 
-        if (!center || leftSide.length < 2 || rightSide.length < 2) continue;
+        const mag = Math.sqrt(gx * gx + gy * gy);
+        const diagMag = Math.sqrt(gd1 * gd1 + gd2 * gd2);
+        const totalMag = mag + diagMag * 0.5;
 
-        // 两侧骨皮质平均亮度
-        const leftAvg = leftSide.slice(-2).reduce((a, p) => a + p.val, 0) / 2;
-        const rightAvg = rightSide.slice(0, 2).reduce((a, p) => a + p.val, 0) / 2;
-        const sideAvg = (leftAvg + rightAvg) / 2;
-
-        const centerVal = center.val;
-        const contrast = sideAvg - centerVal;
-
-        // 骨折判定：亮-暗-亮模式
-        if (sideAvg > boneThreshold * 0.60 && 
-            centerVal < sideAvg * 0.55 && 
-            contrast > 22) {
-
-          // 暗区宽度
-          let darkWidth = 0;
-          for (const p of profile) {
-            if (p.val < sideAvg * 0.65) darkWidth++;
-          }
-
-          // 合理裂缝宽度：1-6像素
-          if (darkWidth >= 1 && darkWidth <= 6) {
-            // 线性连续性验证
-            let continuity = 0;
-            for (let extend = 1; extend <= 4; extend++) {
-              const ex = Math.round(x + extend * dir.dx * 3);
-              const ey = Math.round(y + extend * dir.dy * 3);
-              if (ex >= 0 && ex < w && ey >= 0 && ey < h) {
-                const eVal = gray[ey * w + ex];
-                const eLeft = gray[ey * w + Math.max(0, ex - dir.dx)];
-                const eRight = gray[ey * w + Math.min(w-1, ex + dir.dx)];
-                if (eVal < (eLeft + eRight) / 2 * 0.60) continuity++;
-              }
-            }
-
-            // 额外： hairline骨折需要更高对比度
-            const contrastBonus = (pattern && pattern.isFaint) ? (contrast > 35 ? 20 : 0) : 0;
-
-            const score = contrast * 2.5 + continuity * 30 + (darkWidth > 1 ? 15 : 0) + contrastBonus;
-            if (score > bestScore) {
-              bestScore = score;
-              bestDir = dir;
+        // 自适应阈值：基于局部对比度
+        const localWindow = [];
+        for (let dy = -2; dy <= 2; dy++) {
+          for (let dx = -2; dx <= 2; dx++) {
+            const py = y + dy, px = x + dx;
+            if (py >= 0 && py < h && px >= 0 && px < w) {
+              localWindow.push(gray[py * w + px]);
             }
           }
         }
-      }
+        const localMean = localWindow.reduce((a, b) => a + b, 0) / localWindow.length;
+        const localStd = Math.sqrt(localWindow.reduce((a, b) => a + (b - localMean) ** 2, 0) / localWindow.length);
+        const adaptiveThreshold = localMean + localStd * 1.5;
 
-      if (bestScore > 55) {
-        fracturePoints.push({
-          x, y,
-          score: bestScore,
-          dir: bestDir,
-          angle: bestDir ? Math.atan2(bestDir.dy, bestDir.dx) : 0
-        });
-      }
-    }
-  }
-
-  // 4. 聚类形成骨折线
-  if (!fracturePoints.length) {
-    return fallbackRegion(w, h, pattern);
-  }
-
-  fracturePoints.sort((a, b) => b.score - a.score);
-
-  // 方向感知聚类
-  const clusters = [];
-  const used = new Set();
-  const topPoints = fracturePoints.slice(0, Math.min(400, fracturePoints.length));
-
-  for (const pt of topPoints) {
-    const key = pt.x + "," + pt.y;
-    if (used.has(key)) continue;
-
-    const cluster = [];
-    const queue = [pt];
-    used.add(key);
-
-    while (queue.length > 0) {
-      const curr = queue.shift();
-      cluster.push(curr);
-
-      for (const other of topPoints) {
-        const oKey = other.x + "," + other.y;
-        if (used.has(oKey)) continue;
-
-        const dist = Math.sqrt((curr.x - other.x) ** 2 + (curr.y - other.y) ** 2);
-        if (dist > 22) continue;
-
-        let angleDiff = Math.abs(curr.angle - other.angle);
-        while (angleDiff > Math.PI) angleDiff -= Math.PI;
-        angleDiff = Math.min(angleDiff, Math.PI - angleDiff);
-
-        if (dist < 14 || (dist < 22 && angleDiff < 0.55)) {
-          used.add(oKey);
-          queue.push(other);
+        if (totalMag > adaptiveThreshold * 0.3 && gray[p] > 30) {
+          gradients.push({
+            x: x / w,
+            y: y / h,
+            mag: totalMag,
+            angle: Math.atan2(gy, gx),
+            scale: scale
+          });
         }
       }
     }
 
-    if (cluster.length >= 5) {
-      const xs = cluster.map(p => p.x);
-      const ys = cluster.map(p => p.y);
-      const minX = Math.min(...xs), maxX = Math.max(...xs);
-      const minY = Math.min(...ys), maxY = Math.max(...ys);
+    // 非极大值抑制
+    gradients.sort((a, b) => b.mag - a.mag);
+    const suppressed = [];
+    const suppressionRadius = 0.05 * (0.25 / scale);
 
-      // PCA
-      let sumX = 0, sumY = 0, sumX2 = 0, sumY2 = 0, sumXY = 0, totalScore = 0;
-      for (const p of cluster) {
-        const weight = p.score;
-        sumX += p.x * weight; sumY += p.y * weight;
-        sumX2 += p.x * p.x * weight; sumY2 += p.y * p.y * weight;
-        sumXY += p.x * p.y * weight;
-        totalScore += weight;
+    for (const g of gradients) {
+      let overlap = false;
+      for (const s of suppressed) {
+        const dx = g.x - s.x;
+        const dy = g.y - s.y;
+        if (Math.sqrt(dx * dx + dy * dy) < suppressionRadius) {
+          overlap = true;
+          break;
+        }
       }
-
-      const meanX = sumX / totalScore, meanY = sumY / totalScore;
-      const covXX = sumX2 / totalScore - meanX * meanX;
-      const covYY = sumY2 / totalScore - meanY * meanY;
-      const covXY = sumXY / totalScore - meanX * meanY;
-
-      const trace = covXX + covYY;
-      const det = covXX * covYY - covXY * covXY;
-      const eigen1 = (trace + Math.sqrt(Math.max(0, trace * trace - 4 * det))) / 2;
-      const eigen2 = (trace - Math.sqrt(Math.max(0, trace * trace - 4 * det))) / 2;
-      const elongation = eigen1 > 0.001 ? eigen2 / eigen1 : 1;
-
-      const angle = Math.atan2(2 * covXY, covXX - covYY) / 2;
-
-      clusters.push({
-        points: cluster,
-        score: totalScore,
-        elongation: Math.min(elongation, 1),
-        meanX, meanY,
-        minX, maxX, minY, maxY,
-        angle,
-        width: maxX - minX,
-        height: maxY - minY,
-        isFractureLine: elongation < 0.30 && (maxX - minX > 12 || maxY - minY > 12),
-      });
+      if (!overlap) suppressed.push(g);
     }
+
+    allFractureCandidates.push(...suppressed.slice(0, Math.max(20, Math.floor(suppressed.length * 0.15))));
+  });
+
+  // 阶段 3: 空间聚类与骨折线形态识别
+  if (!allFractureCandidates.length) {
+    return fallbackRegions(classKey);
   }
 
-  clusters.sort((a, b) => b.score - a.score);
+  const clusters = dbscanClusters(allFractureCandidates, 0.08, config.minClusterSize);
 
   if (!clusters.length) {
-    return fallbackRegion(w, h, pattern);
+    return fallbackRegions(classKey);
   }
 
-  // 5. 构建结果
-  const best = clusters[0];
-
-  // 扫描区域
-  const allPts = clusters.slice(0, 3).flatMap(c => c.points);
-  let sMinX = w, sMinY = h, sMaxX = 0, sMaxY = 0;
-  for (const p of allPts) {
-    sMinX = Math.min(sMinX, p.x); sMinY = Math.min(sMinY, p.y);
-    sMaxX = Math.max(sMaxX, p.x); sMaxY = Math.max(sMaxY, p.y);
+  let targetClusters = clusters;
+  if (config.multiFocus && clusters.length > 1) {
+    targetClusters = clusters.sort((a, b) => b.length - a.length).slice(0, Math.min(3, config.maxClusters || 3));
+  } else {
+    targetClusters = [clusters.reduce((a, b) => a.length > b.length ? a : b, clusters[0])];
   }
-  const sPad = 0.12;
+
+  // 计算扫描区域
+  const scanPadding = 0.12;
+  const allPoints = allFractureCandidates;
   const scan = {
-    x: Math.max(0.005, (sMinX / w) - sPad),
-    y: Math.max(0.005, (sMinY / h) - sPad),
-    w: Math.min(0.99, (sMaxX - sMinX) / w + sPad * 2),
-    h: Math.min(0.99, (sMaxY - sMinY) / h + sPad * 2),
+    x: Math.max(0, Math.min(...allPoints.map(p => p.x)) - scanPadding),
+    y: Math.max(0, Math.min(...allPoints.map(p => p.y)) - scanPadding),
+    w: Math.min(1, Math.max(...allPoints.map(p => p.x)) - Math.min(...allPoints.map(p => p.x)) + scanPadding * 2),
+    h: Math.min(1, Math.max(...allPoints.map(p => p.y)) - Math.min(...allPoints.map(p => p.y)) + scanPadding * 2)
   };
 
-  // 病变区域：使用分类指导的尺寸
-  const c = best;
-  const cx = c.meanX / w, cy = c.meanY / h;
-
-  // 如果有分类模式，使用分类指导的尺寸；否则自动计算
-  let lesionW, lesionH;
-  if (pattern && pattern.width && pattern.height) {
-    // 分类指导的尺寸，但根据实际检测到的簇大小调整
-    const cW = (c.maxX - c.minX) / w;
-    const cH = (c.maxY - c.minY) / h;
-    lesionW = Math.max(pattern.width * 0.6, Math.min(pattern.width * 2.0, cW * 2.2));
-    lesionH = Math.max(pattern.height * 0.6, Math.min(pattern.height * 2.0, cH * 2.2));
-  } else {
-    const cW = (c.maxX - c.minX) / w;
-    const cH = (c.maxY - c.minY) / h;
-    lesionW = Math.max(0.08, Math.min(0.50, cW * 2.2));
-    lesionH = Math.max(0.06, Math.min(0.50, cH * 2.2));
+  // 计算主病灶区域
+  const mainCluster = targetClusters[0];
+  if (!mainCluster || mainCluster.length < 2) {
+    return fallbackRegions(classKey, scan);
   }
+
+  const { center, majorAxis, minorAxis, angle } = pcaAnalysis(mainCluster);
+  const elongation = majorAxis / (minorAxis + 1e-6);
+
+  let lesionW, lesionH, lesionX, lesionY;
+
+  if (config.elongationThreshold && elongation > config.elongationThreshold) {
+    lesionW = Math.min(0.5, majorAxis * 1.4);
+    lesionH = Math.min(0.4, minorAxis * 2.2);
+  } else {
+    const spread = Math.max(majorAxis, minorAxis) * 1.6;
+    lesionW = Math.min(0.45, spread);
+    lesionH = Math.min(0.4, spread * 0.9);
+  }
+
+  lesionX = center.x - lesionW / 2;
+  lesionY = center.y - lesionH / 2;
+
+  lesionX = Math.max(0.02, Math.min(0.98 - lesionW, lesionX));
+  lesionY = Math.max(0.02, Math.min(0.98 - lesionH, lesionY));
+  lesionW = Math.min(0.96 - lesionX, lesionW);
+  lesionH = Math.min(0.96 - lesionY, lesionH);
+
+  const isCircular = Math.abs(lesionW - lesionH) < 0.08 || elongation < 1.5;
 
   return {
     scan,
-    lesion: {
-      x: Math.max(0.005, cx - lesionW / 2),
-      y: Math.max(0.005, cy - lesionH / 2),
-      w: lesionW,
-      h: lesionH,
-    },
-    circle: c.isFractureLine || (lesionW / lesionH > 0.35 && lesionW / lesionH < 2.8),
-    _cluster: best,
-    _isFractureLine: c.isFractureLine,
-    _angle: c.angle,
-    _allClusters: clusters.slice(0, 3),
-    _pattern: pattern,
-  };
-}
-
-function fallbackRegion(w, h, pattern) {
-  const defaultW = pattern ? pattern.width : 0.28;
-  const defaultH = pattern ? pattern.height : 0.24;
-  return {
-    scan: { x: 0.18, y: 0.16, w: 0.64, h: 0.68 },
-    lesion: { x: 0.34, y: 0.34, w: defaultW, h: defaultH },
-    circle: true,
-    _isFractureLine: false,
-    _pattern: pattern,
+    lesion: { x: lesionX, y: lesionY, w: lesionW, h: lesionH },
+    circle: isCircular,
+    angle: angle,
+    multiLesions: targetClusters.slice(1).map(c => {
+      const { center: mc } = pcaAnalysis(c);
+      const size = Math.min(0.2, 0.05 + c.length * 0.01);
+      return { x: mc.x - size / 2, y: mc.y - size / 2, w: size, h: size };
+    })
   };
 }
 
@@ -677,11 +729,13 @@ async function analyze() {
   const result = classify(feature);
   const cls = model.classes.find((item) => item.key === result.classKey);
 
-  // 将分类结果中的骨折类型模式传给 findRegions，实现协同定位
+  // 使用分类结果指导定位
+  const regions = findRegions(result.classKey);
+
   lastAnalysis = {
     ...result,
     cls,
-    regions: findRegions(result._pattern),
+    regions: regions,
   };
   renderPipeline(-1, 4);
   scanBand.classList.remove("running");
@@ -695,96 +749,71 @@ async function analyze() {
 function drawMarks(analysis, scale) {
   const imgW = currentImage.naturalWidth * scale;
   const imgH = currentImage.naturalHeight * scale;
-  const { scan, lesion, circle } = analysis.regions;
-  const cluster = analysis.regions._cluster;
-  const isFractureLine = analysis.regions._isFractureLine;
-  const fractureAngle = analysis.regions._angle || 0;
-  const pattern = analysis.regions._pattern;
+  const { scan, lesion, circle, angle, multiLesions } = analysis.regions;
 
   ctx.save();
+  ctx.lineWidth = Math.max(2, imgW / 360);
 
-  // 扫描区域
-  ctx.lineWidth = Math.max(2, imgW / 400);
-  ctx.setLineDash([12, 8]);
-  ctx.strokeStyle = "rgba(84, 214, 214, 0.80)";
-  ctx.fillStyle = "rgba(84, 214, 214, 0.05)";
+  // 扫描区域（虚线框）
+  ctx.setLineDash([10, 7]);
+  ctx.strokeStyle = "rgba(84, 214, 214, 0.95)";
+  ctx.fillStyle = "rgba(84, 214, 214, 0.08)";
   ctx.strokeRect(scan.x * imgW, scan.y * imgH, scan.w * imgW, scan.h * imgH);
   ctx.fillRect(scan.x * imgW, scan.y * imgH, scan.w * imgW, scan.h * imgH);
 
-  // 骨折标注
+  // 主病灶区域
   ctx.setLineDash([]);
-  const lx = lesion.x * imgW;
-  const ly = lesion.y * imgH;
-  const lw = lesion.w * imgW;
-  const lh = lesion.h * imgH;
+  ctx.strokeStyle = "rgba(255, 100, 107, 0.98)";
+  ctx.fillStyle = "rgba(255, 100, 107, 0.11)";
 
-  if (isFractureLine && cluster) {
-    // 细长骨折线：旋转椭圆精确匹配裂缝方向
-    ctx.save();
-    ctx.translate(lx + lw / 2, ly + lh / 2);
-    ctx.rotate(fractureAngle);
+  const x = lesion.x * imgW;
+  const y = lesion.y * imgH;
+  const w = lesion.w * imgW;
+  const h = lesion.h * imgH;
 
-    // 主椭圆
-    ctx.strokeStyle = "rgba(255, 50, 50, 0.95)";
-    ctx.fillStyle = "rgba(255, 50, 50, 0.08)";
-    ctx.lineWidth = Math.max(3, imgW / 240);
-
-    const major = Math.max(lw, lh) * 0.65;
-    const minor = Math.min(lw, lh) * 0.22;
+  if (circle) {
     ctx.beginPath();
-    ctx.ellipse(0, 0, major, minor, 0, 0, Math.PI * 2);
+    ctx.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
-
-    // 骨折线中心指示
-    ctx.strokeStyle = "rgba(255, 240, 80, 0.95)";
-    ctx.lineWidth = Math.max(2.5, imgW / 320);
-    ctx.setLineDash([10, 6]);
+  } else if (angle && Math.abs(angle) > 0.15 && analysis.classKey !== 'comminuted') {
+    // 旋转椭圆框（用于线性骨折）
+    ctx.translate(x + w / 2, y + h / 2);
+    ctx.rotate(angle);
     ctx.beginPath();
-    ctx.moveTo(-major * 0.85, 0);
-    ctx.lineTo(major * 0.85, 0);
-    ctx.stroke();
-
-    // 端点
-    ctx.setLineDash([]);
-    ctx.fillStyle = "rgba(255, 240, 80, 0.9)";
-    for (const end of [-1, 1]) {
-      ctx.beginPath();
-      ctx.arc(end * major * 0.85, 0, Math.max(4, imgW / 280), 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    ctx.restore();
-
-  } else if (circle) {
-    // 圆形/椭圆
-    ctx.strokeStyle = "rgba(255, 50, 50, 0.95)";
-    ctx.fillStyle = "rgba(255, 50, 50, 0.08)";
-    ctx.lineWidth = Math.max(3, imgW / 280);
-    ctx.beginPath();
-    ctx.ellipse(lx + lw / 2, ly + lh / 2, lw / 2, lh / 2, 0, 0, Math.PI * 2);
+    ctx.ellipse(0, 0, w / 2, h / 2, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
-
+    ctx.rotate(-angle);
+    ctx.translate(-(x + w / 2), -(y + h / 2));
   } else {
-    // 矩形
-    ctx.strokeStyle = "rgba(255, 50, 50, 0.95)";
-    ctx.fillStyle = "rgba(255, 50, 50, 0.08)";
-    ctx.lineWidth = Math.max(3, imgW / 280);
-    ctx.fillRect(lx, ly, lw, lh);
-    ctx.strokeRect(lx, ly, lw, lh);
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeRect(x, y, w, h);
   }
 
-  // 标签
-  ctx.font = `bold ${Math.max(13, imgW / 42)}px system-ui, -apple-system, sans-serif`;
+  // 主病灶标注
+  ctx.font = `${Math.max(12, imgW / 52)}px system-ui`;
   ctx.fillStyle = "#fff";
-  ctx.shadowColor = "rgba(0,0,0,0.9)";
-  ctx.shadowBlur = 6;
-  ctx.shadowOffsetX = 1;
-  ctx.shadowOffsetY = 1;
-  const labelText = isFractureLine ? "FRACTURE LINE" : "FRACTURE";
-  ctx.fillText(labelText, lx + 12, Math.max(24, ly - 14));
-  ctx.shadowBlur = 0;
+  ctx.fillText("ROI", x + 8, Math.max(18, y - 8));
+
+  // 多病灶标注（粉碎性骨折等）
+  if (multiLesions && multiLesions.length > 0) {
+    ctx.strokeStyle = "rgba(255, 180, 100, 0.85)";
+    ctx.fillStyle = "rgba(255, 180, 100, 0.08)";
+    multiLesions.forEach((ml, idx) => {
+      const mx = ml.x * imgW;
+      const my = ml.y * imgH;
+      const mw = ml.w * imgW;
+      const mh = ml.h * imgH;
+      ctx.beginPath();
+      ctx.ellipse(mx + mw / 2, my + mh / 2, mw / 2, mh / 2, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "#fff";
+      ctx.fillText(`F${idx + 2}`, mx + 8, Math.max(18, my - 8));
+      ctx.fillStyle = "rgba(255, 180, 100, 0.08)";
+    });
+  }
 
   ctx.restore();
 }
