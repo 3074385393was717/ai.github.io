@@ -1,3 +1,8 @@
+/* ============================================
+   BoneVision AI - Enhanced Styles
+   支持多病灶标注、旋转框、自适应布局
+   ============================================ */
+
 :root {
   --bg: #111316;
   --panel: #191c20;
@@ -10,6 +15,7 @@
   --green: #62d27d;
   --amber: #f1b84c;
   --red: #ff646b;
+  --orange: #ffb464;
   --white: #ffffff;
   --shadow: 0 18px 50px rgba(0, 0, 0, 0.26);
 }
@@ -41,6 +47,9 @@ input {
   font: inherit;
 }
 
+/* ============================================
+   Top Bar
+   ============================================ */
 .topbar {
   height: 64px;
   display: flex;
@@ -49,6 +58,7 @@ input {
   padding: 0 22px;
   border-bottom: 1px solid var(--line);
   background: rgba(17, 19, 22, 0.94);
+  backdrop-filter: blur(12px);
 }
 
 .brand {
@@ -67,6 +77,7 @@ input {
   color: #081011;
   font-weight: 900;
   letter-spacing: 0;
+  box-shadow: 0 2px 12px rgba(84, 214, 214, 0.3);
 }
 
 .brand strong {
@@ -97,14 +108,24 @@ input {
   color: var(--muted);
   background: transparent;
   cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.lang:hover {
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.05);
 }
 
 .lang.active {
-  background: var(--cyan);
+  background: linear-gradient(135deg, var(--cyan), var(--green));
   color: #071011;
   font-weight: 800;
+  box-shadow: 0 2px 8px rgba(84, 214, 214, 0.25);
 }
 
+/* ============================================
+   Main Layout
+   ============================================ */
 .shell {
   height: calc(100vh - 64px);
   display: grid;
@@ -145,6 +166,9 @@ h2 {
   margin-bottom: 10px;
 }
 
+/* ============================================
+   Dropzone
+   ============================================ */
 .dropzone {
   min-height: 154px;
   border: 1px dashed #465254;
@@ -158,11 +182,18 @@ h2 {
   text-align: center;
   padding: 18px;
   cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.dropzone:hover {
+  border-color: var(--cyan);
+  background: rgba(84, 214, 214, 0.12);
 }
 
 .dropzone.drag {
   border-color: var(--cyan);
-  background: rgba(84, 214, 214, 0.12);
+  background: rgba(84, 214, 214, 0.18);
+  box-shadow: 0 0 20px rgba(84, 214, 214, 0.15);
 }
 
 .dropzone input {
@@ -179,6 +210,12 @@ h2 {
   color: var(--cyan);
   font-size: 24px;
   line-height: 1;
+  transition: all 0.3s ease;
+}
+
+.dropzone:hover .drop-icon {
+  border-color: var(--cyan);
+  box-shadow: 0 0 12px rgba(84, 214, 214, 0.3);
 }
 
 .dropzone strong {
@@ -195,6 +232,9 @@ h2 {
   line-height: 1.55;
 }
 
+/* ============================================
+   Buttons
+   ============================================ */
 .primary {
   width: 100%;
   margin-top: 12px;
@@ -209,13 +249,28 @@ h2 {
   align-items: center;
   justify-content: center;
   gap: 8px;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 16px rgba(84, 214, 214, 0.2);
+}
+
+.primary:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 24px rgba(84, 214, 214, 0.35);
+}
+
+.primary:active:not(:disabled) {
+  transform: translateY(0);
 }
 
 .primary:disabled {
   opacity: 0.38;
   cursor: not-allowed;
+  box-shadow: none;
 }
 
+/* ============================================
+   Pipeline Steps
+   ============================================ */
 .pipeline {
   display: grid;
   gap: 8px;
@@ -231,6 +286,7 @@ h2 {
   border-radius: 8px;
   color: var(--muted);
   font-size: 13px;
+  transition: all 0.3s ease;
 }
 
 .step i {
@@ -239,17 +295,40 @@ h2 {
   border-radius: 50%;
   background: var(--quiet);
   flex: 0 0 auto;
+  transition: all 0.3s ease;
+}
+
+.step.run {
+  border-color: var(--amber);
+  background: rgba(241, 184, 76, 0.08);
+  color: var(--amber);
 }
 
 .step.run i {
   background: var(--amber);
   box-shadow: 0 0 12px var(--amber);
+  animation: pulse 1.5s ease infinite;
+}
+
+.step.done {
+  border-color: var(--green);
+  background: rgba(98, 210, 125, 0.08);
+  color: var(--green);
 }
 
 .step.done i {
   background: var(--green);
+  box-shadow: 0 0 8px rgba(98, 210, 125, 0.4);
 }
 
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* ============================================
+   Type Chips
+   ============================================ */
 .type-list {
   display: flex;
   flex-wrap: wrap;
@@ -263,19 +342,41 @@ h2 {
   border-radius: 999px;
   padding: 6px 9px;
   font-size: 12px;
+  transition: all 0.3s ease;
+}
+
+.type-chip:hover {
+  border-color: var(--cyan);
+  color: var(--cyan);
 }
 
 .type-chip.hit {
   color: var(--red);
   border-color: rgba(255, 100, 107, 0.7);
   background: rgba(255, 100, 107, 0.12);
+  box-shadow: 0 0 12px rgba(255, 100, 107, 0.15);
+  animation: hitPulse 2s ease infinite;
 }
 
+@keyframes hitPulse {
+  0%, 100% { box-shadow: 0 0 12px rgba(255, 100, 107, 0.15); }
+  50% { box-shadow: 0 0 20px rgba(255, 100, 107, 0.3); }
+}
+
+/* ============================================
+   Notice
+   ============================================ */
 .notice {
   border: 1px solid rgba(241, 184, 76, 0.4);
   background: rgba(241, 184, 76, 0.08);
   border-radius: 8px;
   padding: 13px;
+  transition: all 0.3s ease;
+}
+
+.notice:hover {
+  border-color: rgba(241, 184, 76, 0.6);
+  background: rgba(241, 184, 76, 0.12);
 }
 
 .notice strong {
@@ -284,6 +385,9 @@ h2 {
   margin-bottom: 5px;
 }
 
+/* ============================================
+   Viewer Panel
+   ============================================ */
 .viewer-panel {
   min-width: 0;
   display: flex;
@@ -329,13 +433,27 @@ h2 {
   color: var(--ink);
   cursor: pointer;
   font-weight: 800;
+  transition: all 0.2s ease;
+  display: grid;
+  place-items: center;
+}
+
+.tool:hover {
+  border-color: var(--cyan);
+  color: var(--cyan);
+  transform: translateY(-1px);
 }
 
 .tool.active {
   color: #071011;
-  background: var(--cyan);
+  background: linear-gradient(135deg, var(--cyan), var(--green));
+  border-color: transparent;
+  box-shadow: 0 2px 8px rgba(84, 214, 214, 0.25);
 }
 
+/* ============================================
+   Canvas Area
+   ============================================ */
 .canvas-wrap {
   flex: 1;
   min-height: 0;
@@ -352,6 +470,11 @@ h2 {
   box-shadow: var(--shadow);
   border: 1px solid #20282a;
   max-width: none;
+  transition: box-shadow 0.3s ease;
+}
+
+#imageCanvas:hover {
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
 }
 
 .empty-state {
@@ -372,6 +495,12 @@ h2 {
   border: 2px solid #2d3738;
   border-radius: 12px;
   position: relative;
+  transition: all 0.3s ease;
+}
+
+.empty-state:hover .xray-icon {
+  border-color: var(--cyan);
+  box-shadow: 0 0 24px rgba(84, 214, 214, 0.15);
 }
 
 .xray-icon::before,
@@ -382,11 +511,17 @@ h2 {
   width: 38px;
   height: 2px;
   background: #2d3738;
-  transform: rotate(-22deg);
+  transition: all 0.3s ease;
+}
+
+.empty-state:hover .xray-icon::before,
+.empty-state:hover .xray-icon::after {
+  background: var(--cyan);
 }
 
 .xray-icon::before {
   top: 38px;
+  transform: rotate(-22deg);
 }
 
 .xray-icon::after {
@@ -394,6 +529,9 @@ h2 {
   transform: rotate(28deg);
 }
 
+/* ============================================
+   Scan Band Animation
+   ============================================ */
 .scan-band {
   position: absolute;
   left: 16px;
@@ -402,6 +540,7 @@ h2 {
   pointer-events: none;
   opacity: 0;
   background: linear-gradient(90deg, transparent, var(--cyan), var(--green), transparent);
+  box-shadow: 0 0 12px rgba(84, 214, 214, 0.5);
 }
 
 .scan-band.running {
@@ -418,6 +557,9 @@ h2 {
   }
 }
 
+/* ============================================
+   Result Panel
+   ============================================ */
 .result-head {
   display: flex;
   align-items: flex-start;
@@ -433,20 +575,32 @@ h2 {
   color: var(--muted);
   white-space: nowrap;
   font-size: 12px;
+  transition: all 0.3s ease;
 }
 
 .status.hot {
   color: #071011;
-  background: var(--amber);
-  border-color: var(--amber);
+  background: linear-gradient(135deg, var(--amber), #f0a030);
+  border-color: transparent;
+  box-shadow: 0 2px 12px rgba(241, 184, 76, 0.3);
+  animation: statusPulse 1.5s ease infinite;
 }
 
 .status.done {
   color: #071011;
-  background: var(--green);
-  border-color: var(--green);
+  background: linear-gradient(135deg, var(--green), #4fc068);
+  border-color: transparent;
+  box-shadow: 0 2px 12px rgba(98, 210, 125, 0.3);
 }
 
+@keyframes statusPulse {
+  0%, 100% { box-shadow: 0 2px 12px rgba(241, 184, 76, 0.3); }
+  50% { box-shadow: 0 4px 20px rgba(241, 184, 76, 0.5); }
+}
+
+/* ============================================
+   Result Cards
+   ============================================ */
 .result-card,
 .analysis-box {
   border: 1px solid var(--line);
@@ -454,6 +608,14 @@ h2 {
   background: rgba(32, 37, 42, 0.92);
   padding: 15px;
   margin-bottom: 12px;
+  transition: all 0.3s ease;
+}
+
+.result-card:hover,
+.analysis-box:hover {
+  border-color: rgba(84, 214, 214, 0.3);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
 }
 
 .dominant {
@@ -461,6 +623,19 @@ h2 {
   background:
     linear-gradient(135deg, rgba(255, 100, 107, 0.13), transparent 52%),
     var(--panel-2);
+  position: relative;
+  overflow: hidden;
+}
+
+.dominant::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--red), var(--amber));
+  opacity: 0.6;
 }
 
 .result-card span {
@@ -496,6 +671,7 @@ h2 {
   background: #101316;
   border-radius: 999px;
   overflow: hidden;
+  position: relative;
 }
 
 .confidence-bar i {
@@ -504,7 +680,19 @@ h2 {
   height: 100%;
   background: linear-gradient(90deg, var(--red), var(--amber), var(--green));
   border-radius: inherit;
-  transition: width 0.5s ease;
+  transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+}
+
+.confidence-bar i::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 20px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3));
+  border-radius: inherit;
 }
 
 .result-grid {
@@ -517,15 +705,30 @@ h2 {
   margin-bottom: 12px;
 }
 
+/* ============================================
+   Analysis Box
+   ============================================ */
 .analysis-box h3 {
   color: var(--cyan);
   font-size: 14px;
   margin-bottom: 9px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.analysis-box h3::before {
+  content: "";
+  width: 4px;
+  height: 16px;
+  background: linear-gradient(180deg, var(--cyan), var(--green));
+  border-radius: 2px;
 }
 
 .analysis-box p,
 .analysis-box li {
   font-size: 15px;
+  color: var(--muted);
 }
 
 .analysis-box ul {
@@ -533,11 +736,86 @@ h2 {
   padding-left: 18px;
 }
 
+.analysis-box li {
+  margin-bottom: 6px;
+  position: relative;
+}
+
+.analysis-box li::marker {
+  color: var(--cyan);
+}
+
 .recommendation {
   border-color: rgba(84, 214, 214, 0.4);
   background: rgba(84, 214, 214, 0.08);
+  position: relative;
+  overflow: hidden;
 }
 
+.recommendation::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--cyan), var(--green));
+  opacity: 0.6;
+}
+
+.recommendation:hover {
+  border-color: rgba(84, 214, 214, 0.6);
+  background: rgba(84, 214, 214, 0.12);
+}
+
+/* ============================================
+   Multi-lesion Indicators (New)
+   ============================================ */
+.lesion-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.lesion-indicator.primary {
+  background: rgba(255, 100, 107, 0.15);
+  color: var(--red);
+  border: 1px solid rgba(255, 100, 107, 0.3);
+}
+
+.lesion-indicator.secondary {
+  background: rgba(255, 180, 100, 0.15);
+  color: var(--orange);
+  border: 1px solid rgba(255, 180, 100, 0.3);
+}
+
+/* ============================================
+   Scrollbar Styling
+   ============================================ */
+.panel::-webkit-scrollbar {
+  width: 6px;
+}
+
+.panel::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.panel::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 3px;
+}
+
+.panel::-webkit-scrollbar-thumb:hover {
+  background: var(--quiet);
+}
+
+/* ============================================
+   Responsive Design
+   ============================================ */
 @media (max-width: 1100px) {
   .shell {
     grid-template-columns: 280px 1fr;
@@ -577,4 +855,23 @@ h2 {
   .result-grid {
     grid-template-columns: 1fr;
   }
+
+  .dominant strong {
+    font-size: 24px;
+  }
+}
+
+/* ============================================
+   Loading States
+   ============================================ */
+.skeleton {
+  background: linear-gradient(90deg, var(--panel-2) 25%, var(--panel) 50%, var(--panel-2) 75%);
+  background-size: 200% 100%;
+  animation: skeleton 1.5s ease infinite;
+  border-radius: 4px;
+}
+
+@keyframes skeleton {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
 }
